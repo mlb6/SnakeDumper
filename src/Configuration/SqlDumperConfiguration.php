@@ -29,6 +29,11 @@ class SqlDumperConfiguration extends AbstractConfiguration implements DumperConf
     private $ignoreStructure = false;
 
     /**
+     * @var bool
+     */
+    private $disableForeignKeys = false;
+
+    /**
      * @return DatabaseConfiguration
      */
     public function getDatabaseConfig()
@@ -122,6 +127,26 @@ class SqlDumperConfiguration extends AbstractConfiguration implements DumperConf
     public function getOutputConfig()
     {
         return $this->outputConfig;
+    }
+
+    /**
+     * Getter for disable foreign keys
+     *
+     * @return bool
+     */
+    public function isDisableForeignKeys()
+    {
+        return $this->disableForeignKeys;
+    }
+
+    /**
+     * Setter to disable foreign keys
+     *
+     * @param bool $disableForeignKeys
+     */
+    public function setDisableForeignKeys($disableForeignKeys)
+    {
+        $this->disableForeignKeys = $disableForeignKeys;
     }
 
     /**

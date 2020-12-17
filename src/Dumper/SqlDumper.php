@@ -2,6 +2,7 @@
 
 namespace Digilist\SnakeDumper\Dumper;
 
+use Digilist\SnakeDumper\Configuration\SqlDumperConfiguration;
 use Digilist\SnakeDumper\Dumper\Context\DumperContextInterface;
 use Digilist\SnakeDumper\Dumper\Sql\SqlDumperContext;
 use Digilist\SnakeDumper\Dumper\Sql\Dumper\TableContentsDumper;
@@ -41,13 +42,24 @@ class SqlDumper implements DumperInterface
 
         $this->dumpPreamble($context);
 
-        if (!$context->getConfig()->isIgnoreStructure()) {
+        /** @var SqlDumperConfiguration $config */
+        $config = $context->getConfig();
+
+        if (!$config->isIgnoreStructure()) {
             $structureDumper->dumpTableStructure($tables);
+        }
+
+        if ($config->isDisableForeignKeys()) {
+            $this->disbaleForeignKeys($context);
         }
 
         $this->dumpTables($context, $tables);
 
-        if (!$context->getConfig()->isIgnoreStructure()) {
+        if ($config->isDisableForeignKeys()) {
+            $this->enableForeignKeys($context);
+        }
+
+        if (!$config->isIgnoreStructure()) {
             $structureDumper->dumpConstraints($tables);
         }
     }
@@ -90,5 +102,14 @@ class SqlDumper implements DumperInterface
 
         $progress->finish();
         $context->getLogger()->info('Dump finished');
+    }
+
+    private function disbaleForeignKeys(SqlDumperContext $context) {
+        // TODO: make it SQL compliant
+        $context->getDumpOutput()->writeln('SET FOREIGN_KEY_CHECKS=0;');
+    }
+    private function enableForeignKeys(SqlDumperContext $context) {
+        // TODO: make it SQL compliant
+        $context->getDumpOutput()->writeln('SET FOREIGN_KEY_CHECKS=1;');
     }
 }

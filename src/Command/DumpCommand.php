@@ -26,6 +26,7 @@ class DumpCommand extends Command
             ->addOption('progress', null, InputOption::VALUE_NONE, 'Show a progress bar')
             ->addOption('disable-limits', null, InputOption::VALUE_NONE, 'Create a full database dump')
             ->addOption('disable-structure', null, InputOption::VALUE_NONE, 'Create a dump containing data only')
+            ->addOption('disable-foreign-keys', null, InputOption::VALUE_NONE, 'Disable foreign keys temporarily when importing data')
             ->addOption('host', 'H', InputOption::VALUE_REQUIRED, 'Override the configured host')
             ->addOption('port', 'P', InputOption::VALUE_REQUIRED, 'Override the configured port')
             ->addOption('user', 'u', InputOption::VALUE_REQUIRED, 'Override the configured user')
@@ -116,6 +117,9 @@ class DumpCommand extends Command
         }
         if ($input->getOption('disable-structure')) {
             $config->setIgnoreStructure(true);
+        }
+        if ($input->getOption('disable-foreign-keys')) {
+            $config->setDisableForeignKeys(true);
         }
         if (($path = $input->getOption('output')) !== null) {
             $config->getOutputConfig()->setFile($path);
