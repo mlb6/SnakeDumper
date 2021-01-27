@@ -2,10 +2,19 @@
 
 namespace Digilist\SnakeDumper\Dumper\Sql\Tests;
 
+use Digilist\SnakeDumper\Configuration\DumperConfigurationInterface;
+use Digilist\SnakeDumper\Configuration\SqlDumperConfiguration;
+use Digilist\SnakeDumper\Configuration\Table\TableConfiguration;
+use Digilist\SnakeDumper\Dumper\Sql\SqlDumperContext;
+use Digilist\SnakeDumper\Dumper\Sql\SqlDumperState;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use PHPUnit\Framework\TestCase;
+use ReflectionObject;
+use ReflectionProperty;
+use Symfony\Component\Console\Input\StringInput;
+use Symfony\Component\Console\Output\NullOutput;
 
 abstract class AbstractSqlTest extends TestCase
 {
@@ -21,6 +30,16 @@ abstract class AbstractSqlTest extends TestCase
      * @var AbstractPlatform
      */
     protected $platform;
+
+    /**
+     * @var SqlDumperContext
+     */
+    protected $context;
+
+
+    /** @var ReflectionProperty */
+    protected $configProperty;
+
 
     public function setUp()
     {
@@ -47,12 +66,39 @@ abstract class AbstractSqlTest extends TestCase
         $this->connection->exec('USE ' . self::DBNAME);
 
         $this->platform = $this->connection->getDatabasePlatform();
+
+        $config = new SqlDumperConfiguration(array(
+            'database' => [
+                'connection' => $this->connection,
+            ],
+        ));
+
+        $this->context = new SqlDumperContext($config, new StringInput(''), new NullOutput());
+
+        $this->configProperty =  (new ReflectionObject($this->context))->getProperty('config');
+        $this->configProperty->setAccessible(true);
+
     }
 
     public function tearDown()
     {
         $this->connection->exec('DROP DATABASE ' . self::DBNAME);
     }
+
+    public function setConfig(array $config) {
+        $this->configProperty->setValue($this->context, new SqlDumperConfiguration(array_merge([
+                'database' => [
+                    'connection' => $this->connection,
+                ]
+            ], $config)
+        ));
+    }
+
+    public function initState(array $tables) {
+        $this->context->setDumperState(new SqlDumperState($tables));
+    }
+
+
 
     /**
  * Create a simple schema the tests can run against.
@@ -162,6 +208,62 @@ abstract class AbstractSqlTest extends TestCase
         $pdo->query('INSERT INTO BadgeMembership VALUES (6, 1, 1, "SKU")');
         $pdo->query('INSERT INTO BadgeMembership VALUES (7, 3, 2, "SKU")');
         $pdo->query('INSERT INTO BadgeMembership VALUES (8, 2, 3, "SKU")');
+
+    }
+
+
+    /**
+     * Create a simple schema the tests can run against.
+     *
+     *
+     */
+    protected function createTestDependencies2Schema()
+    {
+        $pdo = $this->connection->getWrappedConnection();
+
+        $pdo->query('CREATE TABLE Customer (
+            id INTEGER PRIMARY KEY AUTO_INCREMENT,
+            name VARCHAR(10)
+        )');
+
+        $pdo->query('CREATE TABLE ActivityDetail (
+            id INTEGER PRIMARY KEY AUTO_INCREMENT,
+            name VARCHAR(20)
+        )');
+
+        $pdo->query('CREATE TABLE ActivityLog (
+            id INTEGER PRIMARY KEY AUTO_INCREMENT,
+            customer_id INTEGER,
+            activity_id INTEGER,
+            name VARCHAR(10),
+            CONSTRAINT ActivityLog_customer_id FOREIGN KEY (customer_id) REFERENCES Customer(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            CONSTRAINT ActivityLog_activity_id FOREIGN KEY (activity_id) REFERENCES ActivityDetail(id) ON UPDATE CASCADE ON DELETE SET NULL
+        )');
+
+
+        // insert data
+        $pdo->query('INSERT INTO Customer VALUES (1, "Markus")');
+        $pdo->query('INSERT INTO Customer VALUES (2, "Konstantin")');
+        $pdo->query('INSERT INTO Customer VALUES (3, "John")');
+        $pdo->query('INSERT INTO Customer VALUES (4, "Konrad")');
+        $pdo->query('INSERT INTO Customer VALUES (5, "Mark")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (1, "Markus Add")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (2, "Markus Remove")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (3, "Konstantin Add")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (4, "John Remove")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (5, "John Add")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (6, "Markus Remove")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (7, "John Add")');
+        $pdo->query('INSERT INTO ActivityDetail VALUES (8, "Konstantin Remove")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (1, 1, 1, "Add")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (2, 1, 2, "Remove")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (3, 2, 3, "Add")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (4, 3, 4, "Remove")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (5, 3, 5, "Add")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (6, 1, 6, "Remove")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (7, 3, 7, "Add")');
+        $pdo->query('INSERT INTO ActivityLog VALUES (8, 2, 8, "Remove")');
+
 
     }
 }

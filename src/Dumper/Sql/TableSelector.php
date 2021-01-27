@@ -6,6 +6,7 @@ use Digilist\SnakeDumper\Configuration\DumperConfigurationInterface;
 use Digilist\SnakeDumper\Configuration\Table\TableConfiguration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Schema\Table;
+use Psr\Log\LoggerInterface;
 
 /**
  * This class helps to find the tables that should be dumped.
@@ -33,10 +34,17 @@ class TableSelector
     private $tableDependencyResolver;
 
     /**
-     * @param Connection                   $connection
+     * @var LoggerInterface
      */
-    public function __construct(Connection $connection)
+    private $logger;
+
+    /**
+     * @param Connection $connection
+     * @param LoggerInterface $logger
+     */
+    public function __construct(Connection $connection, LoggerInterface $logger)
     {
+        $this->logger = $logger;
         $this->connection = $connection;
         $this->identifierQuoter = new IdentifierQuoter($connection);
         $this->tableDependencyResolver = new TableDependencyResolver();
@@ -53,15 +61,16 @@ class TableSelector
     public function findTablesToDump(DumperConfigurationInterface $config)
     {
         $schemaManager = $this->connection->getSchemaManager();
-
+        $this->logger->debug('Listing all tables from SQL DB.');
         $tables = $schemaManager->listTables();
+        $this->logger->debug('DONE');
         $this->createMissingTableConfigs($config, $tables);
 
         $filter = new TableFilter($config);
         $tables = $filter->filterWhiteListTables($tables);
         $tables = $filter->filterIgnoredTables($tables);
 
-        $tables = $this->tableDependencyResolver->sortTablesByDependencies($tables);
+        $tables = $this->tableDependencyResolver->sortTablesByDependencies($tables, $this->logger);
         $this->tableDependencyResolver->createDependentFilters($tables, $config);
 
         // Quote all identifiers, as Doctrine DBAL only quotes reserved keywords by default

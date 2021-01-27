@@ -9,6 +9,7 @@ use Digilist\SnakeDumper\Configuration\Table\TableConfiguration;
 use Digilist\SnakeDumper\Configuration\Table\TableDependencyConstraint;
 use Doctrine\DBAL\Schema\ForeignKeyConstraint;
 use Doctrine\DBAL\Schema\Table;
+use Psr\Log\LoggerInterface;
 
 /**
  * This class helps to resolve table dependencies by foreign key constraints.
@@ -39,7 +40,7 @@ class TableDependencyResolver
      *
      * @return Table[]
      */
-    public function sortTablesByDependencies(array $tables)
+    public function sortTablesByDependencies(array $tables, LoggerInterface $logger)
     {
         $nodes = array();
         $dependencyGraph = new DependencyGraph();
@@ -58,6 +59,7 @@ class TableDependencyResolver
                 if ($foreignKey->getForeignTableName() == $table->getName()) {
                     continue;
                 }
+                $logger->debug("Add dependency from \t". $table->getName()."\tto\t".$foreignKey->getForeignTableName());
 
                 $dependencyGraph->addDependency(
                     $nodes[$table->getName()],

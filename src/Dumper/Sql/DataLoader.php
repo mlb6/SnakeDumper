@@ -31,31 +31,50 @@ class DataLoader implements DataLoaderInterface
     private $logger;
 
     /**
+     * @var SqlDumperContext
+     */
+    private $context;
+
+    /**
      * @param ConnectionHandler $connectionHandler
      * @param LoggerInterface   $logger
      */
-    public function __construct(ConnectionHandler $connectionHandler, LoggerInterface $logger)
+    public function __construct(SqlDumperContext $context)
     {
-        $this->connectionHandler = $connectionHandler;
-        $this->logger = $logger;
+        $this->context = $context;
+        $this->connectionHandler = $context->getConnectionHandler();
+        $this->logger = $context->getLogger();
+    }
+
+    /**
+     * @return SqlDumperState
+     */
+    public function getDumperState()
+    {
+        return $this->context->getDumperState();
+    }
+
+    /**
+     * @return SqlQueryState
+     */
+    public function getCurrentQueryState()
+    {
+        return $this->getDumperState()->getCurrentQueryState();
     }
 
     /**
      * Executes the generated sql statement.
      *
-     * @param TableConfiguration $tableConfig
-     * @param Table              $table
-     * @param array              $harvestedValues
-     *
+     * @param Table $table
      * @return \Doctrine\DBAL\Driver\Statement
      * @throws UnsupportedFilterException
      * @throws \Doctrine\DBAL\DBALException
      */
-    public function executeSelectQuery(TableConfiguration $tableConfig, Table $table, array $harvestedValues)
+    public function executeSelectQuery(Table $table)
     {
-        list($query, $parameters) = $this->buildSelectQuery($tableConfig, $table, $harvestedValues);
+        list($query, $parameters) = $this->buildSelectQuery($table);
 
-        $this->logger->debug('Executing select query' . $query);
+        $this->logger->debug('Executing select query: ' . $query);
         $result = $this->connectionHandler->getConnection()->prepare($query);
         $result->execute($parameters);
 
@@ -65,17 +84,15 @@ class DataLoader implements DataLoaderInterface
     /**
      * Count the number of rows for the generated select statement.
      *
-     * @param TableConfiguration $tableConfig
-     * @param Table              $table
-     * @param array              $harvestedValues
-     *
+     * @param Table $table
+     * @param SqlDumperContext $dumperState
      * @return int
      * @throws UnsupportedFilterException
      * @throws \Doctrine\DBAL\DBALException
      */
-    public function countRows(TableConfiguration $tableConfig, Table $table, array $harvestedValues)
+    public function countRows(Table $table)
     {
-        list($query, $parameters) = $this->buildSelectQuery($tableConfig, $table, $harvestedValues);
+        list($query, $parameters) = $this->buildSelectQuery($table);
 
         // Remove everything before the first FROM, to replace it with a SELECT 1
         $query = 'SELECT 1 ' . substr($query, stripos($query, 'FROM'));
@@ -93,21 +110,22 @@ class DataLoader implements DataLoaderInterface
     /**
      * This method creates the actual select statements and binds the parameters.
      *
-     * @param TableConfiguration $tableConfig
-     * @param Table              $table
-     * @param array              $harvestedValues
-     *
+     * @param Table $table
+     * @param SqlDumperStateInterface $dumperState
+     * @param null $columnName
      * @return array
      * @throws UnsupportedFilterException
      * @throws \Doctrine\DBAL\DBALException
      */
-    private function buildSelectQuery(TableConfiguration $tableConfig, Table $table, $harvestedValues)
+    private function buildSelectQuery(Table $table, $columnName = null)
     {
-        $qb = $this->createSelectQueryBuilder($tableConfig, $table, $harvestedValues);
+        $this->getCurrentQueryState()->reset();
+        $qb = $this->createSelectQueryBuilder($table, $columnName);
 
         $query = $qb->getSQL();
         $parameters = $qb->getParameters();
 
+        $tableConfig = $this->context->getTableConfig($table);
         if ($tableConfig->getQuery() != null) {
             $query = $tableConfig->getQuery();
 
@@ -123,21 +141,26 @@ class DataLoader implements DataLoaderInterface
     }
 
     /**
-     * @param TableConfiguration $tableConfig
-     * @param Table              $table
-     * @param array              $harvestedValues
-     *
+     * @param Table $table
+     * @param SqlDumperStateInterface $dumperState
+     * @param null $columnName
      * @return QueryBuilder
      * @throws UnsupportedFilterException
      * @throws \Doctrine\DBAL\DBALException
      */
-    private function createSelectQueryBuilder(TableConfiguration $tableConfig, Table $table, $harvestedValues = array())
+    private function createSelectQueryBuilder(Table $table, $columnName = null)
     {
+        $platform = $this->connectionHandler->getPlatform();
         $qb = $this->connectionHandler->getConnection()->createQueryBuilder()
-            ->select('*')
-            ->from($table->getQuotedName($this->connectionHandler->getPlatform()), 't');
+            ->select($columnName ? $table->getColumn($columnName)->getQuotedName($platform) : '*')
+            ->from($table->getQuotedName($platform), 't');
 
-        $this->addFiltersToSelectQuery($qb, $tableConfig, $harvestedValues);
+        if ($columnName) {
+            $qb->distinct();
+        }
+
+        $tableConfig = $this->context->getTableConfig($table);
+        $this->addFiltersToSelectQuery($qb, $tableConfig);
         if ($tableConfig->getLimit() != null) {
             $qb->setMaxResults($tableConfig->getLimit());
         }
@@ -151,16 +174,15 @@ class DataLoader implements DataLoaderInterface
     /**
      * Add the configured filter to the select query.
      *
-     * @param QueryBuilder       $qb
+     * @param QueryBuilder $qb
      * @param TableConfiguration $tableConfig
-     * @param array              $harvestedValues
+     * @param SqlDumperStateInterface $dumperState
      * @throws UnsupportedFilterException
      */
-    private function addFiltersToSelectQuery(QueryBuilder $qb, TableConfiguration $tableConfig, array $harvestedValues)
+    private function addFiltersToSelectQuery(QueryBuilder $qb, TableConfiguration $tableConfig)
     {
-        $paramIndex = 0;
         foreach ($tableConfig->getFilters() as $filter) {
-            $expr = $this->addFilterToSelectQuery($qb, $tableConfig, $harvestedValues,  $filter, $paramIndex);
+            $expr = $this->addFilterToSelectQuery($qb, $tableConfig,  $filter);
             $qb->andWhere($expr);
         }
     }
@@ -174,26 +196,17 @@ class DataLoader implements DataLoaderInterface
      * @return CompositeExpression|mixed
      * @throws UnsupportedFilterException
      */
-    private function addFilterToSelectQuery(QueryBuilder $qb, TableConfiguration $tableConfig, array $harvestedValues, $filter, &$paramIndex)
+    private function addFilterToSelectQuery(QueryBuilder $qb, TableConfiguration $tableConfig, $filter)
     {
         if ($filter instanceof ColumnFilter) {
             if ($filter instanceof DataDependentFilter) {
-                $this->handleDataDependentFilter($filter, $tableConfig, $harvestedValues);
-            }
-
-            $param = $this->bindParameters($qb, $filter, $paramIndex++);
-            $expr = call_user_func_array([$qb->expr(), $filter->getOperator()], [
-                $this->connectionHandler->getPlatform()->quoteIdentifier($filter->getColumnName()),
-                $param
-            ]);
-            if ($filter instanceof DataDependentFilter) {
-                // also select null values
-                $expr = $qb->expr()->orX(
-                    $expr,
-                    $qb->expr()->isNull(
-                        $this->connectionHandler->getPlatform()->quoteIdentifier($filter->getColumnName())
-                    )
-                );
+                $expr = $this->handleDataDependentFilter($qb,  $tableConfig, $filter);
+            } else {
+                $param = $this->bindParameters($qb, $filter);
+                $expr = call_user_func_array([$qb->expr(), $filter->getOperator()], [
+                    $this->connectionHandler->getPlatform()->quoteIdentifier($filter->getColumnName()),
+                    $param
+                ]);
             }
             return $expr;
         }
@@ -203,8 +216,8 @@ class DataLoader implements DataLoaderInterface
             return call_user_func_array(
                 [$qb->expr(), $filter->getOperator()],
                 array_map(
-                    function ($childFilter) use ($qb, $tableConfig, $harvestedValues, &$paramIndex) {
-                        return $this->addFilterToSelectQuery($qb, $tableConfig, $harvestedValues, $childFilter, $paramIndex);
+                    function ($childFilter) use ($qb, $tableConfig) {
+                        return $this->addFilterToSelectQuery($qb, $tableConfig, $childFilter);
                     },
                     $filter->getFilters()
                 )
@@ -217,32 +230,29 @@ class DataLoader implements DataLoaderInterface
     /**
      * Validates and modifies the data dependent filter to act like an IN-filter.
      *
+     * @param QueryBuilder $qb
+     * @param TableConfiguration $tableConfig
+     * @param array $harvestedValues
      * @param DataDependentFilter $filter
-     * @param TableConfiguration               $tableConfig
-     * @param array                            $harvestedValues
+     * @param $paramIndex
+     * @return CompositeExpression
      */
     private function handleDataDependentFilter(
-        DataDependentFilter $filter,
+        QueryBuilder $qb,
         TableConfiguration $tableConfig,
-        array $harvestedValues
+        DataDependentFilter $filter
     ) {
+        $platform = $this->connectionHandler->getPlatform();
         $tableName = $tableConfig->getName();
+        $table = $this->getDumperState()->getTableByName($tableName);
+        $column = $table->getColumn($filter->getColumnName());
         $referencedTable = $filter->getReferencedTable();
         $referencedColumn = $filter->getReferencedColumn();
 
-        // Ensure the dependent table has been dumped before the current table
-        if (!isset($harvestedValues[$referencedTable])) {
-            throw new InvalidArgumentException(
-                sprintf(
-                    'The table %s has not been dumped before %s',
-                    $referencedTable,
-                    $tableName
-                )
-            );
-        }
+        $harvestedValues = $this->getDumperState()->getHarvestedValues($referencedTable, $referencedColumn);
 
-        // Ensure the necessary column was included in the dump
-        if (!isset($harvestedValues[$referencedTable][$referencedColumn])) {
+        // If table has been dumped before the current table: Ensure the necessary column was included in the dump
+        if ($this->getDumperState()->isTableHarvested($referencedTable) && is_null($harvestedValues)) {
             throw new InvalidArgumentException(
                 sprintf(
                     'The %s column of table %s has not been dumped. (dependency of %s)',
@@ -253,7 +263,51 @@ class DataLoader implements DataLoaderInterface
             );
         }
 
-        $filter->setValue($harvestedValues[$referencedTable][$referencedColumn]);
+        if (is_null($harvestedValues)) {
+            $queryState = $this->getCurrentQueryState();
+            if (!$queryState->containsDependency($referencedTable)) {
+                $queryState->pushDependency($tableName);
+                list($query, $parameters) = $this->buildSelectQuery($this->getDumperState()->getTableByName($referencedTable), $referencedColumn);
+                $queryState->popDependency();
+                $this->logger->debug("Harvesting $referencedTable:$referencedColumn for $tableName with  query: " . $query);
+                $results = $this->connectionHandler->getConnection()->prepare($query);
+                $results->execute($parameters);
+                $results = array_unique(array_map(function ($row) use ($referencedColumn) {
+                    return is_numeric($row[$referencedColumn]) ? intval($row[$referencedColumn]) : $row[$referencedColumn];
+                }, iterator_to_array($results)));
+                $this->logger->debug("Harvest results : " . count($results));
+                $harvestedValues = $results;
+            } else {
+                $this->logger->warning('Skip dependency filter for : ' . $referencedTable);
+                return '';
+            }
+        }
+
+
+
+
+        if (!is_null($harvestedValues)) {
+            $filter->setValue($harvestedValues);
+
+            $param = $this->bindParameters($qb, $filter);
+            $expr = $qb->expr()->in(
+                $column->getQuotedName($platform),
+                $param
+            );
+        } else {
+            $this->logger->debug('RETURN no expression');
+            return '';
+        }
+
+        // also select null values
+        return $qb->expr()->orX(
+            $expr,
+            $qb->expr()->isNull(
+                $this->connectionHandler->getPlatform()->quoteIdentifier($filter->getColumnName())
+            )
+        );
+
+
     }
 
     /**
@@ -267,7 +321,7 @@ class DataLoader implements DataLoaderInterface
      *
      * @return array|string|bool
      */
-    private function bindParameters(QueryBuilder $qb, FilterInterface $filter, $paramIndex)
+    private function bindParameters(QueryBuilder $qb, FilterInterface $filter)
     {
         if(in_array($filter->getOperator(), [
             ColumnFilter::OPERATOR_IS_NOT_NULL,
@@ -275,6 +329,8 @@ class DataLoader implements DataLoaderInterface
         ])) {
             return;
         };
+
+        $paramIndex = $this->getCurrentQueryState()->incrementParamIndex();
 
         $inOperator = in_array($filter->getOperator(), [
             ColumnFilter::OPERATOR_IN,
@@ -325,12 +381,23 @@ class DataLoader implements DataLoaderInterface
         $query = $qb->getSQL();
         $parameters = $qb->getParameters();
 
-        $this->logger->debug('Executing select query' . $query);
+        $this->logger->debug('Executing select query: ' . $query);
         $results = $this->connectionHandler->getConnection()->prepare($query);
         $results->execute($parameters);
         $results = array_map(function ($row) use ($property) {
             return $row[$property];
         }, iterator_to_array($results));
         return $results;
+    }
+
+    /**
+     * Verify if the given table name exist
+     *
+     * @param string $tableName
+     * @return bool
+     */
+    public function isExistingTable($tableName)
+    {
+        return !is_null($this->getDumperState()->getTableByName($tableName));
     }
 }

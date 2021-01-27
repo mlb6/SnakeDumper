@@ -6,6 +6,7 @@ use Digilist\SnakeDumper\Dumper\Context\DumperContextInterface;
 use Digilist\SnakeDumper\Dumper\Sql\DataLoader;
 use Digilist\SnakeDumper\Dumper\Sql\SqlDumperContext;
 use Digilist\SnakeDumper\Dumper\Sql\Dumper\TableContentsDumper;
+use Digilist\SnakeDumper\Dumper\Sql\SqlDumperState;
 use Digilist\SnakeDumper\Dumper\Sql\TableSelector;
 use Digilist\SnakeDumper\Dumper\Sql\Dumper\StructureDumper;
 use Doctrine\DBAL\Schema\Table;
@@ -32,7 +33,7 @@ class SqlDumper implements DumperInterface
             );
         }
         $this->context = $context;
-        $this->dataLoader = new DataLoader($context->getConnectionHandler(), $context->getLogger());
+        $this->dataLoader = new DataLoader($context);
     }
 
     /**
@@ -45,11 +46,12 @@ class SqlDumper implements DumperInterface
      */
     public function dump()
     {
+        // Retrieve list of tables
+        $tableFinder = new TableSelector($this->context->getConnectionHandler()->getConnection(), $this->context->getLogger());
+        $tables = $tableFinder->findTablesToDump($this->context->getConfig());
+        $this->context->setDumperState(new SqlDumperState($tables));
         $this->context->getConfig()->hydrateConfig($this->dataLoader);
 
-        // Retrieve list of tables
-        $tableFinder = new TableSelector($this->context->getConnectionHandler()->getConnection());
-        $tables = $tableFinder->findTablesToDump($this->context->getConfig());
 
         $structureDumper = new StructureDumper(
             $this->context->getConnectionHandler()->getPlatform(),
@@ -100,7 +102,7 @@ class SqlDumper implements DumperInterface
 
         $contentsDumper = new TableContentsDumper($this->context, $this->dataLoader);
         foreach ($tables as $table) {
-            $contentsDumper->dumpTable($table, $this->context->getConfig()->getTableConfig($table->getName()));
+            $contentsDumper->dumpTable($table);
             $progress->advance();
         }
 

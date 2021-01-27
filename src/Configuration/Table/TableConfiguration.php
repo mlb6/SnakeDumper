@@ -353,7 +353,11 @@ class TableConfiguration extends AbstractConfiguration
         /** @var MultiTableDependencyConstraint $dependency */
         foreach ($this->dependenciesToHydrate as $dependency) {
             $tables = $dataLoader->getDistinctValues($this->getName(), $dependency->getColumnReferencedTable());
+
             foreach ($tables as $table) {
+                if (!$dataLoader->isExistingTable($table)) {
+                    continue;
+                }
                 $this->addDependency(new TableDependencyConstraint(
                     $table,
                     $dependency->getReferencedColumn(),

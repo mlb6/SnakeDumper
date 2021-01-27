@@ -18,7 +18,7 @@ class TableSelectorTest extends AbstractSqlTest
      */
     public function testWithoutTables()
     {
-        $tableSelector = new TableSelector($this->connection);
+        $tableSelector = new TableSelector($this->connection, $this->context->getLogger());
         $this->assertEquals(array(), $tableSelector->findTablesToDump(new SqlDumperConfiguration()));
     }
 
@@ -29,7 +29,7 @@ class TableSelectorTest extends AbstractSqlTest
      */
     public function testSelectTables()
     {
-        $tableSelector = new TableSelector($this->connection);
+        $tableSelector = new TableSelector($this->connection, $this->context->getLogger());
         $this->createTestSchema();
 
         $tables = $tableSelector->findTablesToDump(new SqlDumperConfiguration());
@@ -78,7 +78,7 @@ class TableSelectorTest extends AbstractSqlTest
                          foobar VARCHAR(255) NOT NULL COMMENT \'(DC2Type:example)\'
                      )');
 
-        $tableSelector = new TableSelector($this->connection);
+        $tableSelector = new TableSelector($this->connection, $this->context->getLogger());
         $tables = $tableSelector->findTablesToDump(new SqlDumperConfiguration());
 
         $this->assertEquals('string', $tables[0]->getColumn('foobar')->getType()->getName());

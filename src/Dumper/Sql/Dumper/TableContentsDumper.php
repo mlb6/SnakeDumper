@@ -2,6 +2,7 @@
 
 namespace Digilist\SnakeDumper\Dumper\Sql\Dumper;
 
+use Digilist\SnakeDumper\Configuration\SqlDumperConfiguration;
 use Digilist\SnakeDumper\Configuration\Table\TableConfiguration;
 use Digilist\SnakeDumper\Converter\Service\DataConverterInterface;
 use Digilist\SnakeDumper\Dumper\Sql\SqlDumperContext;
@@ -46,11 +47,6 @@ class TableContentsDumper
     private $dataLoader;
 
     /**
-     * @var array
-     */
-    private $harvestedValues = [];
-
-    /**
      * @param SqlDumperContext $context
      * @param DataLoader $dataLoader
      */
@@ -69,9 +65,9 @@ class TableContentsDumper
      * @param Table              $table
      * @param TableConfiguration $tableConfig
      */
-    public function dumpTable(Table $table, TableConfiguration $tableConfig)
+    public function dumpTable(Table $table)
     {
-        $this->initValueHarvesting($tableConfig);
+        $tableConfig = $this->context->getTableConfig($table);
 
         // check if table contents should be ignored
         if ($tableConfig->isContentIgnored()) {
@@ -89,7 +85,7 @@ class TableContentsDumper
      * @param Table              $table
      * @param TableConfiguration $tableConfig
      */
-    private function dumpTableContent(Table $table, TableConfiguration $tableConfig) {
+    private function dumpTableContent(Table $table, $tableConfig) {
         // Ensure connection is still open (to prevent for example "MySQL server has gone" errors)
         $this->connectionHandler->reconnectIfNecessary();
 
@@ -108,13 +104,19 @@ class TableContentsDumper
         $buffer = array(); // array to buffer rows
 
         $this->logger->info('Querying table ' . $table->getName());
-        $rowCount = $this->dataLoader->countRows($tableConfig, $table, $this->harvestedValues);
-        $result = $this->dataLoader->executeSelectQuery($tableConfig, $table, $this->harvestedValues);
+        $rowCount = $this->dataLoader->countRows($table);
+        $result = $this->dataLoader->executeSelectQuery($table);
 
         $this->logger->info(sprintf('Dumping table %s (%d rows)', $table->getName(), $rowCount));
         $progress = $this->context
             ->getProgressBarHelper()
             ->createProgressBar($rowCount, OutputInterface::VERBOSITY_VERY_VERBOSE);
+
+        if ($rowCount == 0) {
+            foreach ($harvestColumns as $harvestColumn) {
+                $this->context->getDumperState()->addHarvestedValue($tableName, $harvestColumn, null);
+            }
+        }
 
         foreach ($result as $row) {
             /*
@@ -132,7 +134,7 @@ class TableContentsDumper
                         )
                     );
                 }
-                $this->harvestedValues[$tableName][$harvestColumn][] = $row[$harvestColumn];
+                $this->context->getDumperState()->addHarvestedValue($tableName, $harvestColumn, $row[$harvestColumn]);
             }
 
             // Quote all values in the row.
@@ -199,17 +201,4 @@ class TableContentsDumper
         return implode(', ', $columns);
     }
 
-    /**
-     * Init the array that is used to harvest values for dependency resolving.
-     *
-     * @param TableConfiguration $tableConfig
-     */
-    private function initValueHarvesting(TableConfiguration $tableConfig)
-    {
-        $this->harvestedValues[$tableConfig->getName()] = array();
-        $harvestColumns = $tableConfig->getColumnsToHarvest();
-        foreach ($harvestColumns as $harvestColumn) {
-            $this->harvestedValues[$tableConfig->getName()][$harvestColumn] = array();
-        }
-    }
 }

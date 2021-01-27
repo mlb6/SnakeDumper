@@ -14,4 +14,12 @@ interface DataLoaderInterface
      * @return array
      */
     public function getDistinctValues($table, $property);
+
+    /**
+     * Verify if the given table name exist
+     *
+     * @param string $tableName
+     * @return bool
+     */
+    public function isExistingTable($tableName);
 }
